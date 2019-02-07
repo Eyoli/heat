@@ -8,20 +8,6 @@ window.onload = function() {
     var T_MAX = 250;
     var T_MIN = -273;
     
-    var sFct = function(x) {
-        if(x == 66) {
-            return T_MAX;
-        }
-        return 0;
-    };
-    
-    function sFct2d(x, y, t) {
-        if((x - 50) * (x - 50) + (y - 50) * (y - 50) < 10*10) {
-            return 1 + Math.cos(t * (2 * Math.PI) / 10) * T_MAX;
-        }
-        return 0;
-    }
-    
     function multiply(m, v) {
         var r = [];
         for(var i = 0; i < m.length; i++) {
@@ -57,6 +43,31 @@ window.onload = function() {
                 
         return x;
     }
+    
+    var functions = {
+        dirach: function(x) {
+            if(x == 66) {
+                return T_MAX;
+            }
+            return 0;
+        },
+        
+        splitX(x, y, t) {
+            if(x < 50) {
+                return 2;
+            }
+            return 1;
+        },
+        
+        sinusoid: function(x, y, t) {
+            var d2 = (x - 50) * (x - 50) + (y - 50) * (y - 50);
+            var r2 = 10*10;
+            if(d2 < r2) {
+                return 5 + Math.cos(t * (2 * Math.PI) / 10) * T_MAX * (1 - d2/r2) * (1 - d2/r2);
+            }
+            return 0;
+        }
+    };
     
     var utils = {
         
@@ -140,13 +151,37 @@ window.onload = function() {
         }
     };
     
+    var matrix = {
+        scalarMult: function(m, s) {
+            var r = [];
+            for(var i = 0; i < m.length; i++) {
+                r[i] = [];
+                for(var j = 0; j < m[i].length; j++) {
+                    r[i][j] = m[i][j] * s;
+                }
+            }
+            return r;
+        },
+        
+        transpose: function(m) {
+            var r = [];
+            for(var i = 0; i < m.length; i++) {
+                for(var j = 0; j < m[i].length; j++) {
+                    r[j] = r[j] || [];
+                    r[j][i] = m[i][j];
+                }
+            }
+            return r;
+        }
+    };
+    
     class Diffusion {
-        constructor(dt, alpha, T0, sFct) {
+        constructor(dt, aFct, T0, sFct) {
             this.dt = dt;
-            this.alpha = alpha;
             this.T0 = T0;
             this.T = T0;
             this.sFct = sFct;
+            this.aFct = aFct;
             this.t = 0;
             this.step = 0;
         }
@@ -154,8 +189,8 @@ window.onload = function() {
     
     class Diffusion1D extends Diffusion {
         
-        constructor(dt, L, alpha, T0, sFct) {
-            super(dt, alpha, T0, sFct);
+        constructor(dt, L, aFct, T0, sFct) {
+            super(dt, aFct, T0, sFct);
             
             this.N = T0.length;
             this.L = L;
@@ -197,8 +232,8 @@ window.onload = function() {
     }
     
     class Diffusion2D extends Diffusion {
-        constructor(dt, L, H, alpha, T0, sFct) {
-            super(dt, alpha, T0, sFct);
+        constructor(dt, L, H, aFct, T0, sFct) {
+            super(dt, aFct, T0, sFct);
             
             // Col number
             this.N = T0[0].length;
@@ -211,8 +246,11 @@ window.onload = function() {
             var dy = H / this.M;
             var dx = L / this.N;
             
-            this.lambdaX = this.alpha * this.dt / (dx * dx);
-            this.lambdaY = this.alpha * this.dt / (dy * dy);
+            // Dispersal coefficient function
+            this.alpha = utils.discretise2d(this.aFct, {x: 0, y: 0}, {x: this.H, y: this.L}, {x: this.M, y: this.N});
+            
+            var lambdaX = matrix.scalarMult(this.alpha, this.dt / (dx * dx));
+            var lambdaY = matrix.scalarMult(this.alpha, this.dt / (dy * dy));
             
             // Row system
             this.aRow = utils.init(this.N - 2, this.lambdaX / this.dt);
@@ -250,8 +288,7 @@ window.onload = function() {
             
             this.T = [];
             for(var j = 1; j < this.N - 1; j++) {
-                var TjPrime = utils.column(this.TPrime, j);
-                var Sj = utils.column(this.S, j);
+                var TjPrime = utils.column(this.TPrime, j);var Sj = utils.column(this.S, j);
                 var d = utils.add(utils.tridiagonalMult(this.dCol, this.eCol, this.fCol, TjPrime), utils.multiply(Sj, -1)).slice(1, this.M - 1);
                 var Tcol = thomasAlgorithm(this.aCol, this.bCol, this.cCol, d);
                 Tcol.splice(0, 0, this.T0[0][j]);
@@ -271,23 +308,20 @@ window.onload = function() {
         
         var N = 100;
         var L = 100;
-        var alpha = 1;
         var dx = L / N;
                 
         // time step complying with CFL conditions
-        var dt = 0.9 * (0.5 * dx * dx) / alpha;
+        //var dt = 0.9 * (0.5 * dx * dx) / alpha;
         
         //var T = utils.discretise(sFct, 0, L, N);
-        var T = utils.discretise2d(sFct2d, {x: 0, y: 0}, {x: 100, y: 100}, {x: 100, y: 100}, 0);
-        //T[0] = T_MAX;
-        //T[N-1] = T_MAX;
+        var T = utils.discretise2d(functions.sinusoid, {x: 0, y: 0}, {x: 100, y: 100}, {x: 100, y: 100}, 0);
         
-        problem = new Diffusion2D(dt, 100, 100, alpha, T, sFct2d);
+        problem = new Diffusion2D(dt, 100, 100, functions.splitX, T, functions.sinusoid);
         //problem = new Diffusion1D(dt, L, alpha, T, sFct);
         
         document.getElementById("clear").onclick = function() {
             //problem = new Diffusion1D(dt, L, alpha, T, sFct);
-            problem = new Diffusion2D(dt, 100, 100, alpha, T, sFct2d);
+            problem = new Diffusion2D(dt, 100, 100, alpha, T, functions.sinusoid);
         }
         
         document.getElementById("start").onclick = function() {
@@ -315,7 +349,7 @@ window.onload = function() {
             for(var j = 0; j < problem.T[i].length; j++) {
                 
                 var pMid = Math.min(T_MID, problem.T[i][j]) / T_MID;
-                var pMax = Math.min(T_MAX, problem.T[i][j]) / T_MAX;
+                var pMax = Math.min(T_MAX - T_MID, problem.T[i][j] - T_MID) / (T_MAX - T_MID);
                 ctx.globalCompositeOperation = "lighter";
                 
                 ctx.fillStyle = "#ff0000";
