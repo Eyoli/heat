@@ -7,6 +7,8 @@ window.onload = function() {
     var T_MID = 50;
     var T_MAX = 250;
     var T_MIN = -273;
+    var gradient;
+    var UNIT;
     
     function multiply(m, v) {
         var r = [];
@@ -52,18 +54,11 @@ window.onload = function() {
             return 0;
         },
         
-        splitX(x, y, t) {
-            if(x < 50) {
-                return 2;
-            }
-            return 1;
-        },
-        
         sinusoid: function(x, y, t) {
             var d2 = (x - 50) * (x - 50) + (y - 50) * (y - 50);
             var r2 = 10*10;
             if(d2 < r2) {
-                return 5 + Math.cos(t * (2 * Math.PI) / 10) * T_MAX * (1 - d2/r2) * (1 - d2/r2);
+                return 5 + Math.cos(t * (2 * Math.PI) / 10) * (T_MID / 2) * (1 - d2/r2) * (1 - d2/r2);
             }
             return 0;
         }
@@ -175,6 +170,32 @@ window.onload = function() {
         }
     };
     
+    class ColorGradient {
+        constructor(r1, g1, b1, r2, g2, b2) {
+            this.ar = (r2 - r1);
+            this.br = r1;
+            this.ag = (g2 - g1);
+            this.bg = g1;
+            this.ab = (b2 - b1);
+            this.bb = b1;
+        }
+        
+        get(x) {
+            var r = this.ar * x + this.br;
+            var g = this.ag * x + this.bg;
+            var b = this.ab * x + this.bb;
+            return 'rgb(' + r + ',' + g + ',' + b + ')';
+        }
+        
+        set(x, r, g, b) {
+            var i = 0;
+            while(i < this.steps.length && x > this.steps[i]) {
+                i++;
+            }
+            steps.splice(i, 0, x);
+        }
+    }
+    
     class Diffusion {
         constructor(dt, aFct, T0, sFct) {
             this.dt = dt;
@@ -251,22 +272,38 @@ window.onload = function() {
             
             var lambdaX = matrix.scalarMult(this.alpha, this.dt / (dx * dx));
             var lambdaY = matrix.scalarMult(this.alpha, this.dt / (dy * dy));
+                                    
+            // Row system (M * N)
+            this.aRow = [];
+            this.bRow = [];
+            this.cRow = [];
+            this.dRow = [];
+            this.eRow = [];
+            this.fRow = [];
+            for(var i = 0; i < this.M; i++) {
+                this.aRow[i] = utils.multiply(lambdaX[i], 1 / this.dt).slice(1, this.N - 1);
+                this.bRow[i] = utils.add(utils.multiply(lambdaX[i], -2 / this.dt), utils.init(this.N, -2 / this.dt)).slice(1, this.N - 1);
+                this.cRow[i] = utils.multiply(lambdaX[i], 1 / this.dt).slice(1, this.N - 1);
+                this.dRow[i] = utils.multiply(lambdaY[i], -1 / this.dt);
+                this.eRow[i] = utils.add(utils.multiply(lambdaY[i], 2 / this.dt), utils.init(this.N, -2 / this.dt));
+                this.fRow[i] = utils.multiply(lambdaY[i], -1 / this.dt);
+            }
             
-            // Row system
-            this.aRow = utils.init(this.N - 2, this.lambdaX / this.dt);
-            this.bRow = utils.init(this.N - 2, -2 * (this.lambdaX + 1) / this.dt);
-            this.cRow = utils.init(this.N - 2, this.lambdaX / this.dt);
-            this.dRow = utils.init(this.N, -this.lambdaY / this.dt);
-            this.eRow = utils.init(this.N, 2 * (this.lambdaY - 1) / this.dt);
-            this.fRow = utils.init(this.N, -this.lambdaY / this.dt);
-            
-            // Column system
-            this.aCol = utils.init(this.M - 2, this.lambdaY / this.dt);
-            this.bCol = utils.init(this.M - 2, -2 * (this.lambdaY + 1) / this.dt);
-            this.cCol = utils.init(this.M - 2, this.lambdaY / this.dt);
-            this.dCol = utils.init(this.M, -this.lambdaX / this.dt);
-            this.eCol = utils.init(this.M, 2 * (this.lambdaX - 1) / this.dt);
-            this.fCol = utils.init(this.M, -this.lambdaX / this.dt);
+            // Column system (N * M)
+            this.aCol = [];
+            this.bCol = [];
+            this.cCol = [];
+            this.dCol = [];
+            this.eCol = [];
+            this.fCol = [];
+            for(var j = 0; j < this.N; j++) {
+                this.aCol[j] = utils.multiply(utils.column(lambdaY, j), 1 / this.dt).slice(1, this.N - 1);
+                this.bCol[j] = utils.add(utils.multiply(utils.column(lambdaY, j), -2 / this.dt), utils.init(this.N, -2 / this.dt)).slice(1, this.N - 1);
+                this.cCol[j] = utils.multiply(utils.column(lambdaY, j), 1 / this.dt).slice(1, this.N - 1);
+                this.dCol[j] = utils.multiply(utils.column(lambdaX, j), -1 / this.dt);
+                this.eCol[j] = utils.add(utils.multiply(utils.column(lambdaX, j), 2 / this.dt), utils.init(this.N, -2 / this.dt));
+                this.fCol[j] = utils.multiply(utils.column(lambdaX, j), -1 / this.dt);
+            }
         }
         
         nextStep() {
@@ -276,8 +313,8 @@ window.onload = function() {
             for(var i = 1; i < this.M - 1; i++) {
                 var Si = utils.copy(this.S[i]);
                 var Ti = utils.copy(this.T[i]);
-                var d = utils.add(utils.tridiagonalMult(this.dRow, this.eRow, this.fRow, Ti), utils.multiply(Si, -1)).slice(1, this.N - 1);
-                this.TPrime[i] = thomasAlgorithm(this.aRow, this.bRow, this.cRow, d);
+                var d = utils.add(utils.tridiagonalMult(this.dRow[i], this.eRow[i], this.fRow[i], Ti), utils.multiply(Si, -1)).slice(1, this.N - 1);
+                this.TPrime[i] = thomasAlgorithm(this.aRow[i], this.bRow[i], this.cRow[i], d);
                 this.TPrime[i].splice(0, 0, this.T0[i][0]);
                 this.TPrime[i].push(this.T0[i][this.N - 1]);
             }
@@ -286,11 +323,14 @@ window.onload = function() {
             
             //console.log(this.TPrime);
             
+            this.t += (this.dt / 2);
+            this.S = utils.discretise2d(this.sFct, {x: 0, y: 0}, {x: this.H, y: this.L}, {x: this.M, y: this.N}, this.t);
+            
             this.T = [];
             for(var j = 1; j < this.N - 1; j++) {
                 var TjPrime = utils.column(this.TPrime, j);var Sj = utils.column(this.S, j);
-                var d = utils.add(utils.tridiagonalMult(this.dCol, this.eCol, this.fCol, TjPrime), utils.multiply(Sj, -1)).slice(1, this.M - 1);
-                var Tcol = thomasAlgorithm(this.aCol, this.bCol, this.cCol, d);
+                var d = utils.add(utils.tridiagonalMult(this.dCol[j], this.eCol[j], this.fCol[j], TjPrime), utils.multiply(Sj, -1)).slice(1, this.M - 1);
+                var Tcol = thomasAlgorithm(this.aCol[j], this.bCol[j], this.cCol[j], d);
                 Tcol.splice(0, 0, this.T0[0][j]);
                 Tcol.push(this.T0[this.M - 1][j]);
                 utils.setColumn(this.T, j, Tcol);
@@ -298,7 +338,7 @@ window.onload = function() {
             utils.setColumn(this.T, 0, utils.column(this.T0, 0));
             utils.setColumn(this.T, this.N - 1, utils.column(this.T0, this.N - 1));
             
-            this.t += this.dt;
+            this.t += (this.dt / 2);
             this.step++;
         }
     }
@@ -306,22 +346,30 @@ window.onload = function() {
 	function init() {
 		ctx = document.getElementById("myCanvas").getContext("2d");
         
+        gradient = new ColorGradient(0, 188, 212, 255, 0, 0);
+        
         var N = 100;
         var L = 100;
         var dx = L / N;
+        UNIT = 760 / N;
                 
         // time step complying with CFL conditions
-        //var dt = 0.9 * (0.5 * dx * dx) / alpha;
+        var dt = 0.9 * (0.5 * dx * dx);
+        
+        var aFct = function(x, y, t) {
+            var d = x*x + y*y;
+            return d < 100*100 && d > 50*50 ? 5 : 1;
+        };
         
         //var T = utils.discretise(sFct, 0, L, N);
         var T = utils.discretise2d(functions.sinusoid, {x: 0, y: 0}, {x: 100, y: 100}, {x: 100, y: 100}, 0);
         
-        problem = new Diffusion2D(dt, 100, 100, functions.splitX, T, functions.sinusoid);
+        problem = new Diffusion2D(dt, 100, 100, aFct, T, functions.sinusoid);
         //problem = new Diffusion1D(dt, L, alpha, T, sFct);
         
         document.getElementById("clear").onclick = function() {
             //problem = new Diffusion1D(dt, L, alpha, T, sFct);
-            problem = new Diffusion2D(dt, 100, 100, alpha, T, functions.sinusoid);
+            problem = new Diffusion2D(dt, 100, 100, aFct, T, functions.sinusoid);
         }
         
         document.getElementById("start").onclick = function() {
@@ -352,21 +400,12 @@ window.onload = function() {
                 var pMax = Math.min(T_MAX - T_MID, problem.T[i][j] - T_MID) / (T_MAX - T_MID);
                 ctx.globalCompositeOperation = "lighter";
                 
-                ctx.fillStyle = "#ff0000";
-                ctx.globalAlpha = pMid;
+                ctx.fillStyle = gradient.get(pMid);
+                ctx.globalAlpha = Math.sqrt(pMid);
                 ctx.beginPath();
-                ctx.arc(20 + j * (760 / problem.T[i].length), 20 + i * (760 / problem.T.length) , 10, 0, 2 * Math.PI);
+                //ctx.arc(20 + j * (760 / problem.T[i].length), 20 + i * (760 / problem.T.length), 10, 0, 2 * Math.PI);
+                ctx.fillRect(20 + j * UNIT, 20 + i * UNIT, UNIT, UNIT);
                 ctx.fill();
-                
-                if(problem.T[i][j] > T_MID) {
-                    
-                    ctx.fillStyle = "#f1d800";
-                    ctx.globalAlpha = pMax;
-                    ctx.beginPath();
-                    ctx.arc(20 + j * (760 / problem.T[i].length), 20 + i * (760 / problem.T.length) , 10, 0, 2 * Math.PI);
-                    ctx.fill();
-                    //ctx.globalCompositeOperation = "source-over";
-                }
             }
         }
 		
