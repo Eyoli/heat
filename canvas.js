@@ -54,11 +54,11 @@ window.onload = function() {
             return 0;
         },
         
-        sinusoid: function(x, y, t) {
-            var d2 = (x - 50) * (x - 50) + (y - 50) * (y - 50);
-            var r2 = 10*10;
+        sinusoid: function(cx, cy, r, p, aMin, aMax, x, y, t) {
+            var d2 = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+            var r2 = r*r;
             if(d2 < r2) {
-                return 5 + Math.cos(t * (2 * Math.PI) / 10) * (T_MID / 2) * (1 - d2/r2) * (1 - d2/r2);
+                return aMin + Math.cos(t * (2 * Math.PI) / p) * aMax * (1 - d2/r2) * (1 - d2/r2);
             }
             return 0;
         }
@@ -208,50 +208,6 @@ window.onload = function() {
         }
     }
     
-    class Diffusion1D extends Diffusion {
-        
-        constructor(dt, L, aFct, T0, sFct) {
-            super(dt, aFct, T0, sFct);
-            
-            this.N = T0.length;
-            this.L = L;
-            this.dx = L / this.N;
-            
-            this.lambda = this.alpha * this.dt / (this.dx * this.dx);
-            
-            this.a = utils.init(this.N - 2, -this.lambda);
-            this.b = utils.init(this.N - 2, 1 + 2 * this.lambda);
-            this.c = utils.init(this.N - 2, -this.lambda);
-            
-            //console.log(this.a, this.b, this.c);
-        }
-        
-        nextStep() {
-            // Discretise heat source function
-            this.S = utils.discretise(this.sFct, 0, this.L, this.N);
-            
-            // Main term
-            var d1 = utils.copy(this.T).slice(1, this.N - 1);
-                
-            // Edge conditions
-            var d2 = utils.init(this.N - 2, 0);
-            d2[0] = this.T0[0];
-            d2[d2.length - 1] = this.T0[this.T0.length - 1];
-            d2 = utils.multiply(d2, this.lambda);
-            
-            // Heat source term
-            var d3 = utils.copy(this.S).slice(1, this.N - 1);
-                
-            var d = utils.add(utils.add(d1, d2), d3);
-            
-            this.T = thomasAlgorithm(this.a, this.b, this.c, d);
-            this.T.splice(0, 0, this.T0[0]);
-            this.T.push(this.T0[this.N - 1]);
-                
-            this.t += this.dt;
-        }
-    }
-    
     class Diffusion2D extends Diffusion {
         constructor(dt, L, H, aFct, T0, sFct) {
             super(dt, aFct, T0, sFct);
@@ -358,18 +314,20 @@ window.onload = function() {
         
         var aFct = function(x, y, t) {
             var d = x*x + y*y;
-            return d < 100*100 && d > 50*50 ? 5 : 1;
+            return d < 100*100 && d > 50*50 ? 5 : 0.1;
         };
         
-        //var T = utils.discretise(sFct, 0, L, N);
-        var T = utils.discretise2d(functions.sinusoid, {x: 0, y: 0}, {x: 100, y: 100}, {x: 100, y: 100}, 0);
+        var sFct = function(x, y, t) {
+            return functions.sinusoid(30, 30, 10, 10, 1, T_MID / 3, x, y, t) + functions.sinusoid(75, 75, 10, 10, 5, T_MID / 2, x, y, t);
+        };
         
-        problem = new Diffusion2D(dt, 100, 100, aFct, T, functions.sinusoid);
-        //problem = new Diffusion1D(dt, L, alpha, T, sFct);
+        var T = utils.discretise2d(sFct, {x: 0, y: 0}, {x: 100, y: 100}, {x: 100, y: 100}, 0);
+        
+        problem = new Diffusion2D(dt, 100, 100, aFct, T, sFct);
         
         document.getElementById("clear").onclick = function() {
             //problem = new Diffusion1D(dt, L, alpha, T, sFct);
-            problem = new Diffusion2D(dt, 100, 100, aFct, T, functions.sinusoid);
+            problem = new Diffusion2D(dt, 100, 100, aFct, T, sFct);
         }
         
         document.getElementById("start").onclick = function() {
@@ -391,7 +349,7 @@ window.onload = function() {
             lastTimestamp = timestamp;
         }
         
-        ctx.clearRect(0, 0, 1000, 800);
+        ctx.clearRect(0, 0, 800, 800);
                 
         for(var i = 0; i < problem.T.length; i++) {
             for(var j = 0; j < problem.T[i].length; j++) {
