@@ -167,32 +167,60 @@ window.onload = function() {
                 }
             }
             return r;
+        },
+        
+        minFilter(m, v) {
+            for(var i = 0; i < m.length; i++) {
+                for(var j = 0; j < m[i].length; j++) {
+                    m[j][i] = Math.max(0, m[i][j]);
+                }
+            }
         }
     };
     
-    class ColorGradient {
-        constructor(r1, g1, b1, r2, g2, b2) {
-            this.ar = (r2 - r1);
-            this.br = r1;
-            this.ag = (g2 - g1);
-            this.bg = g1;
-            this.ab = (b2 - b1);
-            this.bb = b1;
+    class LinearColorGradient {
+        constructor(c1, c2) {
+            this.X = [];
+            this.C = [];
+            this.A = [];
+            this.B = [];
+            
+            this.set(0, c1);
+            this.set(1, c2);
         }
         
         get(x) {
-            var r = this.ar * x + this.br;
-            var g = this.ag * x + this.bg;
-            var b = this.ab * x + this.bb;
+            var i = 1;
+            while(i < this.X.length && x > this.X[i]) {
+                i++;
+            }
+            var r = this.A[i-1].r * x + this.B[i-1].r;
+            var g = this.A[i-1].g * x + this.B[i-1].g;
+            var b = this.A[i-1].b * x + this.B[i-1].b;
             return 'rgb(' + r + ',' + g + ',' + b + ')';
         }
         
-        set(x, r, g, b) {
+        set(x, c) {
             var i = 0;
-            while(i < this.steps.length && x > this.steps[i]) {
+            while(i < this.X.length && x > this.X[i]) {
                 i++;
             }
-            steps.splice(i, 0, x);
+            this.X.splice(i, 0, x);
+            this.C.splice(i, 0, c);
+            // Compute linear coefficients for each segment (a, b)
+            while(i > 0 && i < this.X.length) {
+                this.A[i-1] = {
+                    r: (this.C[i].r - this.C[i-1].r) / (this.X[i] - this.X[i-1]), 
+                    g: (this.C[i].g - this.C[i-1].g) / (this.X[i] - this.X[i-1]), 
+                    b: (this.C[i].b - this.C[i-1].b) / (this.X[i] - this.X[i-1])
+                };
+                this.B[i-1] = {
+                    r: this.C[i-1].r - this.A[i-1].r * this.X[i-1], 
+                    g: this.C[i-1].g - this.A[i-1].g * this.X[i-1], 
+                    b: this.C[i-1].b - this.A[i-1].b * this.X[i-1]
+                };
+                i++;
+            }
         }
     }
     
@@ -209,7 +237,7 @@ window.onload = function() {
     }
     
     class Diffusion2D extends Diffusion {
-        constructor(dt, L, H, aFct, T0, sFct) {
+        constructor(dt, dx, dy, aFct, T0, sFct) {
             super(dt, aFct, T0, sFct);
             
             // Col number
@@ -217,11 +245,11 @@ window.onload = function() {
             // Row number
             this.M = T0.length;
             
-            this.H = H;
-            this.L = L;
+            this.H = this.M * dy;
+            this.L = this.N * dx;
             
-            var dy = H / this.M;
-            var dx = L / this.N;
+            var dy = dy;
+            var dx = dx;
             
             // Dispersal coefficient function
             this.alpha = utils.discretise2d(this.aFct, {x: 0, y: 0}, {x: this.H, y: this.L}, {x: this.M, y: this.N});
@@ -280,7 +308,7 @@ window.onload = function() {
             //console.log(this.TPrime);
             
             this.t += (this.dt / 2);
-            this.S = utils.discretise2d(this.sFct, {x: 0, y: 0}, {x: this.H, y: this.L}, {x: this.M, y: this.N}, this.t);
+            //this.S = utils.discretise2d(this.sFct, {x: 0, y: 0}, {x: this.H, y: this.L}, {x: this.M, y: this.N}, this.t);
             
             this.T = [];
             for(var j = 1; j < this.N - 1; j++) {
@@ -294,6 +322,8 @@ window.onload = function() {
             utils.setColumn(this.T, 0, utils.column(this.T0, 0));
             utils.setColumn(this.T, this.N - 1, utils.column(this.T0, this.N - 1));
             
+            //matrix.minFilter(this.T, 0);
+            
             this.t += (this.dt / 2);
             this.step++;
         }
@@ -302,32 +332,39 @@ window.onload = function() {
 	function init() {
 		ctx = document.getElementById("myCanvas").getContext("2d");
         
-        gradient = new ColorGradient(0, 188, 212, 255, 0, 0);
+        gradient = new LinearColorGradient({r: 0, g: 188, b: 212}, {r:255,g:235,b:59});
+        gradient.set(0.2, {r: 146, g: 138, b: 0});
+        gradient.set(0.6, {r: 255, g: 0, b: 0});
+        console.log(gradient);
         
         var N = 100;
+        var M = 100;
+        var H = 100;
         var L = 100;
-        var dx = L / N;
         UNIT = 760 / N;
+
+        var dy = H / M;
+        var dx = L / N;
                 
         // time step complying with CFL conditions
         var dt = 0.9 * (0.5 * dx * dx);
         
         var aFct = function(x, y, t) {
             var d = x*x + y*y;
-            return d < 100*100 && d > 50*50 ? 5 : 0.1;
+            return d < 100*100 && d > 50*50 ? 10 : 0.1;
         };
         
         var sFct = function(x, y, t) {
             return functions.sinusoid(30, 30, 10, 10, 1, T_MID / 3, x, y, t) + functions.sinusoid(75, 75, 10, 10, 5, T_MID / 2, x, y, t);
         };
         
-        var T = utils.discretise2d(sFct, {x: 0, y: 0}, {x: 100, y: 100}, {x: 100, y: 100}, 0);
+        var T = utils.discretise2d(sFct, {x: 0, y: 0}, {x: L, y: L}, {x: L, y: L}, 0);
         
-        problem = new Diffusion2D(dt, 100, 100, aFct, T, sFct);
+        problem = new Diffusion2D(dt, dx, dy, aFct, T, sFct);
         
         document.getElementById("clear").onclick = function() {
             //problem = new Diffusion1D(dt, L, alpha, T, sFct);
-            problem = new Diffusion2D(dt, 100, 100, aFct, T, sFct);
+            problem = new Diffusion2D(dt, dx, dy, aFct, T, sFct);
         }
         
         document.getElementById("start").onclick = function() {
@@ -354,12 +391,11 @@ window.onload = function() {
         for(var i = 0; i < problem.T.length; i++) {
             for(var j = 0; j < problem.T[i].length; j++) {
                 
-                var pMid = Math.min(T_MID, problem.T[i][j]) / T_MID;
-                var pMax = Math.min(T_MAX - T_MID, problem.T[i][j] - T_MID) / (T_MAX - T_MID);
+                var p = Math.min(T_MAX, problem.T[i][j]) / T_MAX;
                 ctx.globalCompositeOperation = "lighter";
                 
-                ctx.fillStyle = gradient.get(pMid);
-                ctx.globalAlpha = Math.sqrt(pMid);
+                ctx.fillStyle = gradient.get(p);
+                ctx.globalAlpha = 0.8 * Math.sqrt(p);
                 ctx.beginPath();
                 //ctx.arc(20 + j * (760 / problem.T[i].length), 20 + i * (760 / problem.T.length), 10, 0, 2 * Math.PI);
                 ctx.fillRect(20 + j * UNIT, 20 + i * UNIT, UNIT, UNIT);
